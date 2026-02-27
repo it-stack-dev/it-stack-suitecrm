@@ -1,0 +1,29 @@
+# Lab 01 — Standalone: Complete SuiteCRM customer relationship management in isolation
+# No external dependencies required.
+---
+services:
+  suitecrm:
+    image: bitnami/suitecrm:latest
+    container_name: it-stack-suitecrm
+    restart: unless-stopped
+    ports:
+      - "80:$firstPort"
+    environment:
+      - IT_STACK_ENV=lab-01-standalone
+    volumes:
+      - suitecrm_data:/var/lib/suitecrm
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - it-stack-net
+
+networks:
+  it-stack-net:
+    driver: bridge
+
+volumes:
+  suitecrm_data:

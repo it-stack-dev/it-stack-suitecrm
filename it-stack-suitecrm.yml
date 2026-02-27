@@ -1,0 +1,57 @@
+# it-stack-suitecrm.yml — IT-Stack Module Manifest
+# Module 12: SuiteCRM customer relationship management
+
+module:
+  name: suitecrm
+  number: "12"
+  repo: it-stack-dev/it-stack-suitecrm
+  version: "0.1.0"
+  phase: 3
+  category: business
+  server: lab-biz1
+  description: "SuiteCRM customer relationship management"
+
+upstream:
+  name: SuiteCRM
+  image: bitnami/suitecrm:latest
+  license: AGPL-3.0
+
+ports:
+  - 80 (HTTP)
+   - 443 (HTTPS)
+
+labs:
+  - id: "12-01"
+    name: Standalone
+    docker_compose: docker/docker-compose.standalone.yml
+    test_script: tests/labs/test-lab-12-01.sh
+  - id: "12-02"
+    name: External Dependencies
+    docker_compose: docker/docker-compose.lan.yml
+    test_script: tests/labs/test-lab-12-02.sh
+  - id: "12-03"
+    name: Advanced Features
+    docker_compose: docker/docker-compose.advanced.yml
+    test_script: tests/labs/test-lab-12-03.sh
+  - id: "12-04"
+    name: SSO Integration
+    docker_compose: docker/docker-compose.sso.yml
+    test_script: tests/labs/test-lab-12-04.sh
+  - id: "12-05"
+    name: Advanced Integration
+    docker_compose: docker/docker-compose.integration.yml
+    test_script: tests/labs/test-lab-12-05.sh
+  - id: "12-06"
+    name: Production Deployment
+    docker_compose: docker/docker-compose.production.yml
+    test_script: tests/labs/test-lab-12-06.sh
+
+resources:
+  cpu_cores: 2
+  ram_gb: 4
+  disk_gb: 20
+
+health_check:
+  endpoint: /health
+  metrics_endpoint: /metrics
+  log_path: /var/log/suitecrm/

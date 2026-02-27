@@ -1,0 +1,53 @@
+# Lab 06 — Production: suitecrm HA-ready with monitoring and external volumes
+---
+services:
+  suitecrm:
+    image: bitnami/suitecrm:latest
+    container_name: it-stack-suitecrm
+    restart: always
+    ports:
+      - "80:$firstPort"
+    environment:
+      - IT_STACK_ENV=production
+      - KEYCLOAK_URL=
+      - DB_HOST=
+      - REDIS_HOST=
+      - GRAYLOG_HOST=
+    volumes:
+      - suitecrm_data:/var/lib/suitecrm
+      - /etc/ssl/certs:/etc/ssl/certs:ro
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: G
+        reservations:
+          cpus: "1.0"
+          memory: 1G
+      restart_policy:
+        condition: any
+        delay: 5s
+    logging:
+      driver: gelf
+      options:
+        gelf-address: "udp://${GRAYLOG_HOST}:12201"
+        tag: "it-stack-suitecrm"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    networks:
+      - it-stack-net
+
+networks:
+  it-stack-net:
+    external: true
+    name: it-stack-production
+
+volumes:
+  suitecrm_data:
+    external: true
+    name: it-stack-suitecrm-data

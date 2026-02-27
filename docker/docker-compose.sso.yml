@@ -1,0 +1,34 @@
+# Lab 04 — SSO Integration: suitecrm with Keycloak OIDC authentication
+---
+services:
+  suitecrm:
+    image: bitnami/suitecrm:latest
+    container_name: it-stack-suitecrm
+    restart: unless-stopped
+    ports:
+      - "80:$firstPort"
+    environment:
+      - IT_STACK_ENV=lab-04-sso
+      - KEYCLOAK_URL=
+      - KEYCLOAK_REALM=
+      - KEYCLOAK_CLIENT_ID=suitecrm
+      - KEYCLOAK_CLIENT_SECRET=
+    networks:
+      - it-stack-net
+
+  # Local Keycloak for SSO lab (replace with lab-id1 in real env)
+  keycloak:
+    image: quay.io/keycloak/keycloak:24
+    container_name: it-stack-suitecrm-keycloak
+    command: start-dev
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - "8080:8080"
+    networks:
+      - it-stack-net
+
+networks:
+  it-stack-net:
+    driver: bridge

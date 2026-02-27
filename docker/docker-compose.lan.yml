@@ -1,0 +1,36 @@
+# Lab 02 — External Dependencies: suitecrm with external PostgreSQL and Redis
+---
+services:
+  suitecrm:
+    image: bitnami/suitecrm:latest
+    container_name: it-stack-suitecrm
+    restart: unless-stopped
+    ports:
+      - "80:$firstPort"
+    environment:
+      - IT_STACK_ENV=lab-02-lan
+      - DB_HOST=
+      - DB_PORT=5432
+      - REDIS_HOST=
+    networks:
+      - it-stack-net
+
+  # Lightweight local DB for lab (replace with lab-db1 in real env)
+  postgres:
+    image: postgres:16
+    container_name: it-stack-suitecrm-db
+    environment:
+      POSTGRES_DB: suitecrm_db
+      POSTGRES_USER: suitecrm_user
+      POSTGRES_PASSWORD: suitecrm_pass
+    volumes:
+      - suitecrm_pg_data:/var/lib/postgresql/data
+    networks:
+      - it-stack-net
+
+networks:
+  it-stack-net:
+    driver: bridge
+
+volumes:
+  suitecrm_pg_data:

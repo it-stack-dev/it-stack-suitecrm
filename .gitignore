@@ -1,0 +1,19 @@
+# Secrets
+.env
+.env.*
+!.env.example
+configs/secrets/
+*.key
+*.pem
+*.crt
+
+# Docker volumes
+data/
+volumes/
+
+# Terraform
+.terraform/
+*.tfstate
+
+# Ansible
+*.retry
