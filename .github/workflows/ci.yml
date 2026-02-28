@@ -21,7 +21,7 @@ jobs:
         run: |
           for f in docker/docker-compose.*.yml; do
             echo "Validating: $f"
-            docker compose -f "$f" config -q
+            docker compose -f "$f" config --no-interpolate -q
           done
 
       - name: ShellCheck — lab test scripts
