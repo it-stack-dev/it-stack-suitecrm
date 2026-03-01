@@ -1,29 +1,64 @@
-# Lab 01 — Standalone: Complete SuiteCRM customer relationship management in isolation
-# No external dependencies required.
+# Lab 01 — Standalone: SuiteCRM CRM in complete isolation
+# Module 12 | No external dependencies required
 ---
 services:
-  suitecrm:
-    image: bitnami/suitecrm:latest
-    container_name: it-stack-suitecrm
+  suitecrm-s01-db:
+    image: mariadb:10.11
+    container_name: suitecrm-s01-db
     restart: unless-stopped
-    ports:
-      - "80:$firstPort"
     environment:
-      - IT_STACK_ENV=lab-01-standalone
+      MYSQL_ROOT_PASSWORD: RootLab01!
+      MYSQL_DATABASE: suitecrm
+      MYSQL_USER: suitecrm
+      MYSQL_PASSWORD: SuiteLab01!
     volumes:
-      - suitecrm_data:/var/lib/suitecrm
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
+      - suitecrm-s01-db-data:/var/lib/mysql
     networks:
-      - it-stack-net
+      - suitecrm-s01-net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pRootLab01!"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
-networks:
-  it-stack-net:
-    driver: bridge
+  suitecrm-s01-app:
+    image: bitnami/suitecrm:8
+    container_name: suitecrm-s01-app
+    restart: unless-stopped
+    depends_on:
+      suitecrm-s01-db:
+        condition: service_healthy
+    environment:
+      SUITECRM_DATABASE_HOST: suitecrm-s01-db
+      SUITECRM_DATABASE_PORT_NUMBER: "3306"
+      SUITECRM_DATABASE_NAME: suitecrm
+      SUITECRM_DATABASE_USER: suitecrm
+      SUITECRM_DATABASE_PASSWORD: SuiteLab01!
+      SUITECRM_USERNAME: admin
+      SUITECRM_PASSWORD: Admin01!
+      SUITECRM_EMAIL: admin@lab.local
+      SUITECRM_HOST: localhost
+      SUITECRM_SKIP_BOOTSTRAP: "no"
+      ALLOW_EMPTY_PASSWORD: "no"
+      SUITECRM_VALIDATE_CONFIGURATION: "yes"
+    ports:
+      - "8302:8080"
+    volumes:
+      - suitecrm-s01-data:/bitnami/suitecrm
+    networks:
+      - suitecrm-s01-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/index.php | grep -qi 'suitecrm\\|SuiteCRM\\|login\\|username' || exit 1"]
+      interval: 30s
+      timeout: 15s
+      retries: 10
+      start_period: 120s
 
 volumes:
-  suitecrm_data:
+  suitecrm-s01-db-data:
+  suitecrm-s01-data:
+
+networks:
+  suitecrm-s01-net:
+    driver: bridge

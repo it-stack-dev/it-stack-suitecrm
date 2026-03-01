@@ -1,71 +1,82 @@
 #!/usr/bin/env bash
-# test-lab-12-01.sh — Lab 12-01: Standalone
-# Module 12: SuiteCRM customer relationship management
-# Basic suitecrm functionality in complete isolation
+# test-lab-12-01.sh — SuiteCRM Lab 01: Standalone
+# Module 12 | Lab 01 | Tests: basic SuiteCRM CRM functionality in isolation
 set -euo pipefail
 
-LAB_ID="12-01"
-LAB_NAME="Standalone"
-MODULE="suitecrm"
-COMPOSE_FILE="docker/docker-compose.standalone.yml"
-PASS=0
-FAIL=0
+COMPOSE_FILE="$(dirname "$0")/../docker/docker-compose.standalone.yml"
+CLEANUP=true
+for arg in "$@"; do [[ "$arg" == "--no-cleanup" ]] && CLEANUP=false; done
 
-# ── Colors ────────────────────────────────────────────────────────────────────
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
-CYAN='\033[0;36m'; NC='\033[0m'
+WEB_PORT=8302
+DB_USER="suitecrm"
+DB_PASS="SuiteLab01!"
+ADMIN_USER="admin"
+ADMIN_PASS="Admin01!"
 
-pass() { echo -e "${GREEN}[PASS]${NC} $1"; ((PASS++)); }
-fail() { echo -e "${RED}[FAIL]${NC} $1"; ((FAIL++)); }
-info() { echo -e "${CYAN}[INFO]${NC} $1"; }
-warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+PASS=0; FAIL=0
+pass() { echo "[PASS] $1"; ((PASS++)) || true; }
+fail() { echo "[FAIL] $1"; ((FAIL++)) || true; }
+section() { echo ""; echo "=== $1 ==="; }
 
-echo -e "${CYAN}======================================${NC}"
-echo -e "${CYAN} Lab ${LAB_ID}: ${LAB_NAME}${NC}"
-echo -e "${CYAN} Module: ${MODULE}${NC}"
-echo -e "${CYAN}======================================${NC}"
+cleanup() {
+  if [[ "$CLEANUP" == "true" ]]; then
+    echo "Cleaning up..."
+    docker compose -f "$COMPOSE_FILE" down -v --remove-orphans 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT
+
+section "Starting Lab 01 Standalone Stack"
+docker compose -f "$COMPOSE_FILE" up -d
+echo "Waiting for MariaDB and SuiteCRM to initialize (may take 2-3 minutes)..."
+
+section "MariaDB Health Check"
+for i in $(seq 1 30); do
+  status=$(docker inspect suitecrm-s01-db --format '{{.State.Health.Status}}' 2>/dev/null || echo "waiting")
+  [[ "$status" == "healthy" ]] && break; sleep 5
+done
+[[ "$(docker inspect suitecrm-s01-db --format '{{.State.Health.Status}}')" == "healthy" ]] && pass "MariaDB healthy" || fail "MariaDB not healthy"
+
+section "SuiteCRM App Health Check"
+for i in $(seq 1 60); do
+  status=$(docker inspect suitecrm-s01-app --format '{{.State.Health.Status}}' 2>/dev/null || echo "waiting")
+  [[ "$status" == "healthy" ]] && break
+  echo "  Waiting for SuiteCRM ($i/60)..."
+  sleep 10
+done
+[[ "$(docker inspect suitecrm-s01-app --format '{{.State.Health.Status}}')" == "healthy" ]] && pass "SuiteCRM app healthy" || fail "SuiteCRM app not healthy"
+
+section "SuiteCRM Web UI"
+http_code=$(curl -so /dev/null -w "%{http_code}" -L "http://localhost:${WEB_PORT}/index.php" 2>/dev/null || echo "000")
+[[ "$http_code" =~ ^(200|302)$ ]] && pass "SuiteCRM login page accessible (HTTP $http_code)" || fail "SuiteCRM login page returned HTTP $http_code"
+
+# Verify login page contains expected content
+curl -sf -L "http://localhost:${WEB_PORT}/index.php" 2>/dev/null | grep -qi "suitecrm\|login\|username\|password" && pass "SuiteCRM login page content OK" || fail "SuiteCRM login page content unexpected"
+
+section "SuiteCRM REST API"
+login_response=$(curl -sf -c /tmp/suitecrm-cookies.txt -X POST "http://localhost:${WEB_PORT}/index.php?module=Users&action=Authenticate" \
+  -d "user_name=${ADMIN_USER}&user_password=$(echo -n ${ADMIN_PASS} | md5sum | awk '{print $1}')" \
+  -w "\n%{http_code}" 2>/dev/null || echo "000")
+login_code=$(echo "$login_response" | tail -1)
+[[ "$login_code" =~ ^(200|302)$ ]] && pass "SuiteCRM auth endpoint accessible (HTTP $login_code)" || fail "SuiteCRM auth endpoint HTTP $login_code"
+
+section "Database Checks"
+db_tables=$(docker exec suitecrm-s01-db mysql -u "${DB_USER}" -p"${DB_PASS}" suitecrm -e "SHOW TABLES;" 2>/dev/null | wc -l || echo 0)
+[[ "$db_tables" -gt 10 ]] && pass "SuiteCRM DB has tables (count: $db_tables)" || fail "SuiteCRM DB seems empty (count: $db_tables)"
+
+section "Container Configuration"
+restart_policy=$(docker inspect suitecrm-s01-app --format '{{.HostConfig.RestartPolicy.Name}}')
+[[ "$restart_policy" == "unless-stopped" ]] && pass "Restart policy: unless-stopped" || fail "Unexpected restart policy: $restart_policy"
+
+db_host=$(docker inspect suitecrm-s01-app --format '{{range .Config.Env}}{{println .}}{{end}}' | grep "^SUITECRM_DATABASE_HOST=" | cut -d= -f2)
+[[ "$db_host" == "suitecrm-s01-db" ]] && pass "SUITECRM_DATABASE_HOST env set correctly" || fail "SUITECRM_DATABASE_HOST not set (got: $db_host)"
+
+section "Named Volumes"
+docker volume ls | grep -q "suitecrm-s01-db-data" && pass "Volume suitecrm-s01-db-data exists" || fail "Volume suitecrm-s01-db-data missing"
+docker volume ls | grep -q "suitecrm-s01-data" && pass "Volume suitecrm-s01-data exists" || fail "Volume suitecrm-s01-data missing"
+
 echo ""
-
-# ── PHASE 1: Setup ────────────────────────────────────────────────────────────
-info "Phase 1: Setup"
-docker compose -f "${COMPOSE_FILE}" up -d
-info "Waiting 30s for ${MODULE} to initialize..."
-sleep 30
-
-# ── PHASE 2: Health Checks ────────────────────────────────────────────────────
-info "Phase 2: Health Checks"
-
-if docker compose -f "${COMPOSE_FILE}" ps | grep -q "running\|Up"; then
-    pass "Container is running"
-else
-    fail "Container is not running"
-fi
-
-# ── PHASE 3: Functional Tests ─────────────────────────────────────────────────
-info "Phase 3: Functional Tests (Lab 01 — Standalone)"
-
-# TODO: Add module-specific functional tests here
-# Example:
-# if curl -sf http://localhost:80/health > /dev/null 2>&1; then
-#     pass "Health endpoint responds"
-# else
-#     fail "Health endpoint not reachable"
-# fi
-
-warn "Functional tests for Lab 12-01 pending implementation"
-
-# ── PHASE 4: Cleanup ──────────────────────────────────────────────────────────
-info "Phase 4: Cleanup"
-docker compose -f "${COMPOSE_FILE}" down -v --remove-orphans
-info "Cleanup complete"
-
-# ── Results ───────────────────────────────────────────────────────────────────
-echo ""
-echo -e "${CYAN}======================================${NC}"
-echo -e " Lab ${LAB_ID} Complete"
-echo -e " ${GREEN}PASS: ${PASS}${NC} | ${RED}FAIL: ${FAIL}${NC}"
-echo -e "${CYAN}======================================${NC}"
-
-if [ "${FAIL}" -gt 0 ]; then
-    exit 1
-fi
+echo "================================================"
+echo "Lab 01 Results: ${PASS} passed, ${FAIL} failed"
+echo "================================================"
+[[ $FAIL -eq 0 ]] && exit 0 || exit 1
