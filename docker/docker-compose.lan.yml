@@ -1,36 +1,82 @@
-# Lab 02 — External Dependencies: suitecrm with external PostgreSQL and Redis
----
+# Lab 02 — External Dependencies
+# Module 12: SuiteCRM CRM
+# External MariaDB + Mailhog SMTP relay
+# Web UI:  http://localhost:8311
+# Mailhog: http://localhost:8611
+
+name: it-stack-suitecrm-lab02
+
 services:
-  suitecrm:
-    image: bitnami/suitecrm:latest
-    container_name: it-stack-suitecrm
+  # ── External Database (simulates lab-db1) ────────────────────────────────────
+  suitecrm-l02-db:
+    image: mariadb:10.11
+    container_name: suitecrm-l02-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: RootLab02!
+      MYSQL_DATABASE: suitecrm
+      MYSQL_USER: suitecrm
+      MYSQL_PASSWORD: SuiteLab02!
+    volumes:
+      - suitecrm-l02-db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-uroot", "-pRootLab02!", "--silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - suitecrm-l02-net
+
+  # ── External SMTP Relay ───────────────────────────────────────────────────────
+  suitecrm-l02-mail:
+    image: mailhog/mailhog:latest
+    container_name: suitecrm-l02-mail
     restart: unless-stopped
     ports:
-      - "80:$firstPort"
-    environment:
-      - IT_STACK_ENV=lab-02-lan
-      - DB_HOST=
-      - DB_PORT=5432
-      - REDIS_HOST=
+      - "8611:8025"
     networks:
-      - it-stack-net
+      - suitecrm-l02-net
 
-  # Lightweight local DB for lab (replace with lab-db1 in real env)
-  postgres:
-    image: postgres:16
-    container_name: it-stack-suitecrm-db
+  # ── SuiteCRM Application ──────────────────────────────────────────────────────
+  suitecrm-l02-app:
+    image: bitnami/suitecrm:8
+    container_name: suitecrm-l02-app
+    restart: unless-stopped
+    depends_on:
+      suitecrm-l02-db:
+        condition: service_healthy
+      suitecrm-l02-mail:
+        condition: service_started
+    ports:
+      - "8311:8080"
     environment:
-      POSTGRES_DB: suitecrm_db
-      POSTGRES_USER: suitecrm_user
-      POSTGRES_PASSWORD: suitecrm_pass
+      SUITECRM_DATABASE_HOST: suitecrm-l02-db
+      SUITECRM_DATABASE_PORT_NUMBER: "3306"
+      SUITECRM_DATABASE_NAME: suitecrm
+      SUITECRM_DATABASE_USER: suitecrm
+      SUITECRM_DATABASE_PASSWORD: SuiteLab02!
+      SUITECRM_USERNAME: admin
+      SUITECRM_PASSWORD: Admin02!
+      SUITECRM_EMAIL: admin@lab.local
+      SUITECRM_SMTP_HOST: suitecrm-l02-mail
+      SUITECRM_SMTP_PORT: "1025"
+      SUITECRM_SMTP_PROTOCOL: ""
     volumes:
-      - suitecrm_pg_data:/var/lib/postgresql/data
+      - suitecrm-l02-data:/bitnami/suitecrm
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/index.php | grep -qi 'suitecrm\\|login'"]
+      interval: 30s
+      timeout: 15s
+      retries: 10
+      start_period: 120s
     networks:
-      - it-stack-net
+      - suitecrm-l02-net
 
 networks:
-  it-stack-net:
+  suitecrm-l02-net:
     driver: bridge
 
 volumes:
-  suitecrm_pg_data:
+  suitecrm-l02-db-data:
+  suitecrm-l02-data:

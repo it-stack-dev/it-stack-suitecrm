@@ -96,3 +96,31 @@ jobs:
       - name: Cleanup
         if: always()
         run: docker compose -f docker/docker-compose.standalone.yml down -v
+
+  lab-02-smoke:
+    name: Lab 02 -- SuiteCRM External Dependencies (MariaDB + Mailhog)
+    runs-on: ubuntu-latest
+    needs: validate
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: sudo apt-get install -y curl default-mysql-client
+      - name: Validate LAN compose
+        run: docker compose -f docker/docker-compose.lan.yml config -q && echo "LAN compose valid"
+      - name: Start LAN stack
+        run: docker compose -f docker/docker-compose.lan.yml up -d
+      - name: Wait for MariaDB
+        run: timeout 120 bash -c 'until docker exec suitecrm-l02-db mysqladmin ping -uroot -pRootLab02! --silent; do sleep 5; done'
+      - name: Wait for Mailhog
+        run: timeout 60 bash -c 'until curl -sf http://localhost:8611/api/v2/messages; do sleep 5; done'
+      - name: Wait for SuiteCRM
+        run: timeout 300 bash -c 'until curl -sf http://localhost:8311/index.php; do sleep 10; done'
+      - name: Run Lab 12-02 test script
+        run: bash tests/labs/test-lab-12-02.sh --no-cleanup
+      - name: Collect logs on failure
+        if: failure()
+        run: docker compose -f docker/docker-compose.lan.yml logs
+      - name: Cleanup
+        if: always()
+        run: docker compose -f docker/docker-compose.lan.yml down -v
