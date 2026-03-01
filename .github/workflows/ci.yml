@@ -154,3 +154,35 @@ jobs:
       - name: Cleanup
         if: always()
         run: docker compose -f docker/docker-compose.advanced.yml down -v
+
+  lab-04-smoke:
+    name: Lab 04 -- SuiteCRM SSO Integration (OpenLDAP + Keycloak SAML)
+    runs-on: ubuntu-latest
+    needs: validate
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: sudo apt-get install -y curl default-mysql-client netcat-openbsd ldap-utils
+      - name: Validate SSO compose
+        run: docker compose -f docker/docker-compose.sso.yml config -q && echo "SSO compose valid"
+      - name: Start SSO stack
+        run: docker compose -f docker/docker-compose.sso.yml up -d
+      - name: Wait for MariaDB
+        run: timeout 120 bash -c 'until docker exec suitecrm-s04-db mysqladmin ping -uroot -pRootLab04! --silent; do sleep 5; done'
+      - name: Wait for OpenLDAP
+        run: timeout 120 bash -c 'until docker exec suitecrm-s04-ldap ldapsearch -x -H ldap://localhost -b dc=lab,dc=local -D cn=admin,dc=lab,dc=local -w LdapLab04! cn=admin >/dev/null 2>&1; do sleep 5; done'
+      - name: Wait for Keycloak
+        run: timeout 300 bash -c 'until curl -sf http://localhost:8441/realms/master; do sleep 10; done'
+      - name: Wait for Mailhog
+        run: timeout 60 bash -c 'until curl -sf http://localhost:8641/api/v2/messages; do sleep 5; done'
+      - name: Wait for SuiteCRM web
+        run: timeout 300 bash -c 'until curl -sf http://localhost:8341/; do sleep 10; done'
+      - name: Run Lab 12-04 test script
+        run: bash tests/labs/test-lab-12-04.sh --no-cleanup
+      - name: Collect logs on failure
+        if: failure()
+        run: docker compose -f docker/docker-compose.sso.yml logs
+      - name: Cleanup
+        if: always()
+        run: docker compose -f docker/docker-compose.sso.yml down -v

@@ -1,34 +1,185 @@
-# Lab 04 — SSO Integration: suitecrm with Keycloak OIDC authentication
----
-services:
-  suitecrm:
-    image: bitnami/suitecrm:latest
-    container_name: it-stack-suitecrm
-    restart: unless-stopped
-    ports:
-      - "80:$firstPort"
-    environment:
-      - IT_STACK_ENV=lab-04-sso
-      - KEYCLOAK_URL=
-      - KEYCLOAK_REALM=
-      - KEYCLOAK_CLIENT_ID=suitecrm
-      - KEYCLOAK_CLIENT_SECRET=
-    networks:
-      - it-stack-net
+# =============================================================================
+# IT-Stack: SuiteCRM — Lab 04: SSO Integration
+# Module 12 · Phase 3 · Lab 04
+# =============================================================================
+# Services: MariaDB · OpenLDAP · Keycloak · Mailhog · SuiteCRM
+# Ports:    SuiteCRM:8341  Keycloak:8441  LDAP:3891  Mailhog:8641
+# Credentials:
+#   DB root:     RootLab04!
+#   SuiteCRM DB: suitecrm / SuiteLab04!
+#   SuiteCRM UI: admin / Admin04!
+#   Keycloak:    admin / Admin04!
+#   LDAP admin:  cn=admin,dc=lab,dc=local / LdapLab04!
+# What's new vs Lab 03:
+#   + OpenLDAP directory for LDAP authentication
+#   + Keycloak 24 dev-mode as SAML IdP (it-stack realm)
+#   + SuiteCRM LDAP auth env vars (SUITECRM_LDAP_*)
+#   + Keycloak SAML metadata endpoint tested in Lab 04
+# =============================================================================
 
-  # Local Keycloak for SSO lab (replace with lab-id1 in real env)
-  keycloak:
-    image: quay.io/keycloak/keycloak:24
-    container_name: it-stack-suitecrm-keycloak
+name: it-stack-suitecrm-lab04
+
+services:
+
+  # ── MariaDB ──────────────────────────────────────────────────────────────
+  suitecrm-s04-db:
+    image: mariadb:10.11
+    container_name: suitecrm-s04-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: RootLab04!
+      MYSQL_DATABASE: suitecrm
+      MYSQL_USER: suitecrm
+      MYSQL_PASSWORD: SuiteLab04!
+    volumes:
+      - suitecrm-s04-db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-uroot", "-pRootLab04!", "--silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    networks:
+      - suitecrm-s04-net
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+
+  # ── OpenLDAP ─────────────────────────────────────────────────────────────
+  suitecrm-s04-ldap:
+    image: osixia/openldap:1.5.0
+    container_name: suitecrm-s04-ldap
+    restart: unless-stopped
+    environment:
+      LDAP_ORGANISATION: "IT-Stack Lab"
+      LDAP_DOMAIN: lab.local
+      LDAP_ADMIN_PASSWORD: LdapLab04!
+      LDAP_CONFIG_PASSWORD: ConfigLab04!
+      LDAP_BASE_DN: dc=lab,dc=local
+      LDAP_READONLY_USER: "true"
+      LDAP_READONLY_USER_USERNAME: readonly
+      LDAP_READONLY_USER_PASSWORD: ReadOnly04!
+    ports:
+      - "3891:389"
+    volumes:
+      - suitecrm-s04-ldap-data:/var/lib/ldap
+      - suitecrm-s04-ldap-config:/etc/ldap/slapd.d
+    healthcheck:
+      test: ["CMD-SHELL", "ldapsearch -x -H ldap://localhost -b dc=lab,dc=local -D cn=admin,dc=lab,dc=local -w LdapLab04! cn=admin > /dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    networks:
+      - suitecrm-s04-net
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.25"
+
+  # ── Keycloak ─────────────────────────────────────────────────────────────
+  suitecrm-s04-kc:
+    image: quay.io/keycloak/keycloak:24.0.3
+    container_name: suitecrm-s04-kc
+    restart: unless-stopped
     command: start-dev
     environment:
       KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD: admin
+      KEYCLOAK_ADMIN_PASSWORD: Admin04!
+      KC_HEALTH_ENABLED: "true"
+      KC_DB: dev-file
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_HTTP_ENABLED: "true"
     ports:
-      - "8080:8080"
+      - "8441:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/realms/master || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
     networks:
-      - it-stack-net
+      - suitecrm-s04-net
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
 
+  # ── Mailhog ──────────────────────────────────────────────────────────────
+  suitecrm-s04-mail:
+    image: mailhog/mailhog:latest
+    container_name: suitecrm-s04-mail
+    restart: unless-stopped
+    ports:
+      - "8641:8025"
+    networks:
+      - suitecrm-s04-net
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.1"
+
+  # ── SuiteCRM ─────────────────────────────────────────────────────────────
+  suitecrm-s04-app:
+    image: bitnami/suitecrm:8
+    container_name: suitecrm-s04-app
+    restart: unless-stopped
+    depends_on:
+      suitecrm-s04-db:
+        condition: service_healthy
+      suitecrm-s04-ldap:
+        condition: service_healthy
+    ports:
+      - "8341:8080"
+    environment:
+      SUITECRM_DATABASE_HOST: suitecrm-s04-db
+      SUITECRM_DATABASE_PORT_NUMBER: "3306"
+      SUITECRM_DATABASE_NAME: suitecrm
+      SUITECRM_DATABASE_USER: suitecrm
+      SUITECRM_DATABASE_PASSWORD: SuiteLab04!
+      MARIADB_ROOT_PASSWORD: RootLab04!
+      SUITECRM_USERNAME: admin
+      SUITECRM_PASSWORD: Admin04!
+      SUITECRM_EMAIL: admin@lab.local
+      SUITECRM_HOST: localhost
+      SUITECRM_ENABLE_HTTPS: "no"
+      # LDAP configuration (applied via SuiteCRM Admin UI or config)
+      SUITECRM_LDAP_SERVER: suitecrm-s04-ldap
+      SUITECRM_LDAP_PORT: "389"
+      SUITECRM_LDAP_BASE_DN: dc=lab,dc=local
+      SUITECRM_LDAP_ADMIN_DN: cn=admin,dc=lab,dc=local
+      SUITECRM_LDAP_ADMIN_PASSWORD: LdapLab04!
+      # Keycloak SAML IdP reference
+      KEYCLOAK_URL: http://suitecrm-s04-kc:8080
+      KEYCLOAK_REALM: it-stack
+      KEYCLOAK_CLIENT_ID: suitecrm
+      # Mail relay
+      SUITECRM_SMTP_HOST: suitecrm-s04-mail
+      SUITECRM_SMTP_PORT: "1025"
+      SUITECRM_SMTP_PROTOCOL: none
+    volumes:
+      - suitecrm-s04-data:/bitnami/suitecrm
+    networks:
+      - suitecrm-s04-net
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+
+# ── Networks ─────────────────────────────────────────────────────────────────
 networks:
-  it-stack-net:
+  suitecrm-s04-net:
+    name: suitecrm-s04-net
     driver: bridge
+
+# ── Volumes ──────────────────────────────────────────────────────────────────
+volumes:
+  suitecrm-s04-db-data:
+  suitecrm-s04-ldap-data:
+  suitecrm-s04-ldap-config:
+  suitecrm-s04-data:
