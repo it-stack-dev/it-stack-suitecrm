@@ -1,34 +1,145 @@
-# Lab 03 — Advanced Features: suitecrm with TLS, resource limits, logging
----
+# Lab 03 — Advanced Features
+# Module 12: SuiteCRM CRM
+# External MariaDB + Redis cache + dedicated Cron + Mailhog + resource limits
+# Web UI:  http://localhost:8321
+# Mailhog: http://localhost:8621
+
+name: it-stack-suitecrm-lab03
+
 services:
-  suitecrm:
-    image: bitnami/suitecrm:latest
-    container_name: it-stack-suitecrm
+  # ── External Database ─────────────────────────────────────────────────────────
+  suitecrm-a03-db:
+    image: mariadb:10.11
+    container_name: suitecrm-a03-db
     restart: unless-stopped
-    ports:
-      - "80:$firstPort"
     environment:
-      - IT_STACK_ENV=lab-03-advanced
-      - TLS_ENABLED=true
+      MYSQL_ROOT_PASSWORD: RootLab03!
+      MYSQL_DATABASE: suitecrm
+      MYSQL_USER: suitecrm
+      MYSQL_PASSWORD: SuiteLab03!
     volumes:
-      - suitecrm_data:/var/lib/suitecrm
-      - ./certs:/etc/ssl/certs:ro
+      - suitecrm-a03-db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-uroot", "-pRootLab03!", "--silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     deploy:
       resources:
         limits:
-          cpus: "2.0"
-          memory: G
-    logging:
-      driver: json-file
-      options:
-        max-size: "100m"
-        max-file: "5"
+          cpus: "0.5"
+          memory: 512M
     networks:
-      - it-stack-net
+      - suitecrm-a03-net
+
+  # ── Redis (session cache) ─────────────────────────────────────────────────────
+  suitecrm-a03-redis:
+    image: redis:7-alpine
+    container_name: suitecrm-a03-redis
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - suitecrm-a03-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+    networks:
+      - suitecrm-a03-net
+
+  # ── SMTP Relay ────────────────────────────────────────────────────────────────
+  suitecrm-a03-mail:
+    image: mailhog/mailhog:latest
+    container_name: suitecrm-a03-mail
+    restart: unless-stopped
+    ports:
+      - "8621:8025"
+    networks:
+      - suitecrm-a03-net
+
+  # ── SuiteCRM Application ──────────────────────────────────────────────────────
+  suitecrm-a03-app:
+    image: bitnami/suitecrm:8
+    container_name: suitecrm-a03-app
+    restart: unless-stopped
+    depends_on:
+      suitecrm-a03-db:
+        condition: service_healthy
+      suitecrm-a03-redis:
+        condition: service_healthy
+      suitecrm-a03-mail:
+        condition: service_started
+    ports:
+      - "8321:8080"
+    environment:
+      SUITECRM_DATABASE_HOST: suitecrm-a03-db
+      SUITECRM_DATABASE_PORT_NUMBER: "3306"
+      SUITECRM_DATABASE_NAME: suitecrm
+      SUITECRM_DATABASE_USER: suitecrm
+      SUITECRM_DATABASE_PASSWORD: SuiteLab03!
+      SUITECRM_USERNAME: admin
+      SUITECRM_PASSWORD: Admin03!
+      SUITECRM_EMAIL: admin@lab.local
+      SUITECRM_SMTP_HOST: suitecrm-a03-mail
+      SUITECRM_SMTP_PORT: "1025"
+      SUITECRM_SMTP_PROTOCOL: ""
+      # Redis session cache
+      SUITECRM_SESSION_SAVE_HANDLER: redis
+      SUITECRM_SESSION_SAVE_PATH: "tcp://suitecrm-a03-redis:6379"
+    volumes:
+      - suitecrm-a03-data:/bitnami/suitecrm
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/index.php | grep -qi 'suitecrm\\|login'"]
+      interval: 30s
+      timeout: 15s
+      retries: 10
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+    networks:
+      - suitecrm-a03-net
+
+  # ── SuiteCRM Cron (scheduled jobs) ───────────────────────────────────────────
+  suitecrm-a03-cron:
+    image: bitnami/suitecrm:8
+    container_name: suitecrm-a03-cron
+    restart: unless-stopped
+    depends_on:
+      suitecrm-a03-app:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c", "while true; do php /opt/bitnami/suitecrm/cron.php > /dev/null 2>&1; sleep 60; done"]
+    environment:
+      SUITECRM_DATABASE_HOST: suitecrm-a03-db
+      SUITECRM_DATABASE_PORT_NUMBER: "3306"
+      SUITECRM_DATABASE_NAME: suitecrm
+      SUITECRM_DATABASE_USER: suitecrm
+      SUITECRM_DATABASE_PASSWORD: SuiteLab03!
+    volumes:
+      - suitecrm-a03-data:/bitnami/suitecrm
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+    networks:
+      - suitecrm-a03-net
 
 networks:
-  it-stack-net:
+  suitecrm-a03-net:
     driver: bridge
 
 volumes:
-  suitecrm_data:
+  suitecrm-a03-db-data:
+  suitecrm-a03-redis-data:
+  suitecrm-a03-data:
