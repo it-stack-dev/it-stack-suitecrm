@@ -1,26 +1,271 @@
-# Lab 05 — Advanced Integration: suitecrm with full IT-Stack ecosystem
----
+# =============================================================================
+# IT-Stack: SuiteCRM — Lab 05: Advanced Integration
+# Module 12 · Phase 3 · Lab 05
+# =============================================================================
+# Services: MariaDB · OpenLDAP · Keycloak · WireMock (Odoo-mock) · Mailhog · SuiteCRM
+# Ports:    SuiteCRM:8362  WireMock:8363  Keycloak:8461  LDAP:3895  Mailhog:8661
+# Credentials:
+#   DB root:     RootLab05!
+#   SuiteCRM DB: suitecrm / SuiteLab05!
+#   SuiteCRM UI: admin / Admin05!
+#   Keycloak:    admin / Admin05!
+#   LDAP:        cn=admin,dc=lab,dc=local / LdapLab05!
+# What's new vs Lab 04:
+#   + WireMock 3.x simulates Odoo JSONRPC API (customer/account sync)
+#   + WireMock also mocks Nextcloud CalDAV endpoint
+#   + SuiteCRM integration env vars: ODOO_URL, ODOO_DB, NEXTCLOUD_URL
+#   + Redis session cache retained from Lab 03
+#   + Dedicated cron container retained
+# Integration tested: SuiteCRM ↔ Odoo (customer sync), SuiteCRM ↔ Nextcloud (CalDAV)
+# =============================================================================
+
+name: it-stack-suitecrm-lab05
+
 services:
-  suitecrm:
-    image: bitnami/suitecrm:latest
-    container_name: it-stack-suitecrm
+
+  # ── MariaDB ──────────────────────────────────────────────────────────────
+  suitecrm-i05-db:
+    image: mariadb:10.11
+    container_name: suitecrm-i05-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: RootLab05!
+      MYSQL_DATABASE: suitecrm
+      MYSQL_USER: suitecrm
+      MYSQL_PASSWORD: SuiteLab05!
+    volumes:
+      - suitecrm-i05-db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-uroot", "-pRootLab05!", "--silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    networks:
+      - suitecrm-i05-net
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+
+  # ── Redis (session cache) ──────────────────────────────────────────────────
+  suitecrm-i05-redis:
+    image: redis:7-alpine
+    container_name: suitecrm-i05-redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - suitecrm-i05-net
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.25"
+
+  # ── OpenLDAP ─────────────────────────────────────────────────────────────
+  suitecrm-i05-ldap:
+    image: osixia/openldap:1.5.0
+    container_name: suitecrm-i05-ldap
+    restart: unless-stopped
+    environment:
+      LDAP_ORGANISATION: "IT-Stack Lab"
+      LDAP_DOMAIN: lab.local
+      LDAP_ADMIN_PASSWORD: LdapLab05!
+      LDAP_CONFIG_PASSWORD: ConfigLab05!
+      LDAP_BASE_DN: dc=lab,dc=local
+      LDAP_READONLY_USER: "true"
+      LDAP_READONLY_USER_USERNAME: readonly
+      LDAP_READONLY_USER_PASSWORD: ReadOnly05!
+    ports:
+      - "3895:389"
+    volumes:
+      - suitecrm-i05-ldap-data:/var/lib/ldap
+      - suitecrm-i05-ldap-config:/etc/ldap/slapd.d
+    healthcheck:
+      test: ["CMD-SHELL", "ldapsearch -x -H ldap://localhost -b dc=lab,dc=local -D cn=admin,dc=lab,dc=local -w LdapLab05! cn=admin > /dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    networks:
+      - suitecrm-i05-net
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.25"
+
+  # ── Keycloak ─────────────────────────────────────────────────────────────
+  suitecrm-i05-kc:
+    image: quay.io/keycloak/keycloak:24.0.3
+    container_name: suitecrm-i05-kc
+    restart: unless-stopped
+    command: start-dev
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: Admin05!
+      KC_HEALTH_ENABLED: "true"
+      KC_DB: dev-file
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_HTTP_ENABLED: "true"
+    ports:
+      - "8461:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/realms/master || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+    networks:
+      - suitecrm-i05-net
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+
+  # ── WireMock — Odoo JSONRPC + Nextcloud CalDAV mock ───────────────────────
+  suitecrm-i05-mock:
+    image: wiremock/wiremock:3.3.1
+    container_name: suitecrm-i05-mock
+    restart: unless-stopped
+    command: >
+      --port=8080
+      --verbose
+      --global-response-templating
+    ports:
+      - "8363:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/__admin/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - suitecrm-i05-net
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.25"
+
+  # ── Mailhog ──────────────────────────────────────────────────────────────
+  suitecrm-i05-mail:
+    image: mailhog/mailhog:latest
+    container_name: suitecrm-i05-mail
     restart: unless-stopped
     ports:
-      - "80:$firstPort"
-    environment:
-      - IT_STACK_ENV=lab-05-integration
-      - KEYCLOAK_URL=
-      - DB_HOST=
-      - REDIS_HOST=
-      - SMTP_HOST=
-      - GRAYLOG_HOST=
-    extra_hosts:
-      - "lab-id1:10.0.50.11"
-      - "lab-db1:10.0.50.12"
-      - "lab-proxy1:10.0.50.15"
+      - "8661:8025"
     networks:
-      - it-stack-net
+      - suitecrm-i05-net
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.1"
 
+  # ── SuiteCRM ─────────────────────────────────────────────────────────────
+  suitecrm-i05-app:
+    image: bitnami/suitecrm:8
+    container_name: suitecrm-i05-app
+    restart: unless-stopped
+    depends_on:
+      suitecrm-i05-db:
+        condition: service_healthy
+      suitecrm-i05-redis:
+        condition: service_healthy
+      suitecrm-i05-ldap:
+        condition: service_healthy
+      suitecrm-i05-mock:
+        condition: service_healthy
+    ports:
+      - "8362:8080"
+    environment:
+      SUITECRM_DATABASE_HOST: suitecrm-i05-db
+      SUITECRM_DATABASE_PORT_NUMBER: "3306"
+      SUITECRM_DATABASE_NAME: suitecrm
+      SUITECRM_DATABASE_USER: suitecrm
+      SUITECRM_DATABASE_PASSWORD: SuiteLab05!
+      MARIADB_ROOT_PASSWORD: RootLab05!
+      SUITECRM_USERNAME: admin
+      SUITECRM_PASSWORD: Admin05!
+      SUITECRM_EMAIL: admin@lab.local
+      SUITECRM_HOST: localhost
+      SUITECRM_ENABLE_HTTPS: "no"
+      # Redis session cache
+      SUITECRM_SESSION_SAVE_HANDLER: redis
+      SUITECRM_SESSION_SAVE_PATH: tcp://suitecrm-i05-redis:6379
+      # LDAP
+      SUITECRM_LDAP_SERVER: suitecrm-i05-ldap
+      SUITECRM_LDAP_PORT: "389"
+      SUITECRM_LDAP_BASE_DN: dc=lab,dc=local
+      SUITECRM_LDAP_ADMIN_DN: cn=admin,dc=lab,dc=local
+      SUITECRM_LDAP_ADMIN_PASSWORD: LdapLab05!
+      # Keycloak SAML
+      KEYCLOAK_URL: http://suitecrm-i05-kc:8080
+      KEYCLOAK_REALM: it-stack
+      KEYCLOAK_CLIENT_ID: suitecrm
+      # Odoo integration (via WireMock)
+      ODOO_URL: http://suitecrm-i05-mock:8080
+      ODOO_DB: odoo
+      ODOO_USER: admin
+      ODOO_API_KEY: lab-odoo-key-05
+      ODOO_JSONRPC_ENDPOINT: /jsonrpc
+      # Nextcloud CalDAV (via WireMock)
+      NEXTCLOUD_URL: http://suitecrm-i05-mock:8080
+      NEXTCLOUD_USER: admin
+      NEXTCLOUD_CALDAV_PATH: /remote.php/dav/calendars/admin
+      # Mail relay
+      SUITECRM_SMTP_HOST: suitecrm-i05-mail
+      SUITECRM_SMTP_PORT: "1025"
+      SUITECRM_SMTP_PROTOCOL: none
+    volumes:
+      - suitecrm-i05-data:/bitnami/suitecrm
+    networks:
+      - suitecrm-i05-net
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+
+  # ── SuiteCRM Cron ─────────────────────────────────────────────────────────
+  suitecrm-i05-cron:
+    image: bitnami/suitecrm:8
+    container_name: suitecrm-i05-cron
+    restart: unless-stopped
+    depends_on:
+      suitecrm-i05-db:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c", "while true; do php /opt/bitnami/suitecrm/cron.php; sleep 60; done"]
+    environment:
+      SUITECRM_DATABASE_HOST: suitecrm-i05-db
+      SUITECRM_DATABASE_PORT_NUMBER: "3306"
+      SUITECRM_DATABASE_NAME: suitecrm
+      SUITECRM_DATABASE_USER: suitecrm
+      SUITECRM_DATABASE_PASSWORD: SuiteLab05!
+    networks:
+      - suitecrm-i05-net
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.25"
+
+# ── Networks ─────────────────────────────────────────────────────────────────
 networks:
-  it-stack-net:
+  suitecrm-i05-net:
+    name: suitecrm-i05-net
     driver: bridge
+
+# ── Volumes ──────────────────────────────────────────────────────────────────
+volumes:
+  suitecrm-i05-db-data:
+  suitecrm-i05-ldap-data:
+  suitecrm-i05-ldap-config:
+  suitecrm-i05-redis-data:
+  suitecrm-i05-data:
