@@ -1,53 +1,207 @@
-# Lab 06 — Production: suitecrm HA-ready with monitoring and external volumes
+# Lab 06 — Production Deployment: SuiteCRM
+# Full production-grade stack: MariaDB · Redis · OpenLDAP · Keycloak · Mailhog · SuiteCRM · Cron
+# Ports: Web:8382  KC:8481  LDAP:3899  MH:8681
+# Naming: suitecrm-p06-{service}  (p06 = production lab 06)
 ---
+name: it-stack-suitecrm-lab06
+
 services:
-  suitecrm:
-    image: bitnami/suitecrm:latest
-    container_name: it-stack-suitecrm
-    restart: always
-    ports:
-      - "80:$firstPort"
+
+  suitecrm-p06-db:
+    image: mariadb:10.11
+    container_name: suitecrm-p06-db
+    restart: unless-stopped
     environment:
-      - IT_STACK_ENV=production
-      - KEYCLOAK_URL=
-      - DB_HOST=
-      - REDIS_HOST=
-      - GRAYLOG_HOST=
+      MYSQL_ROOT_PASSWORD: RootProd06!
+      MYSQL_DATABASE: suitecrm
+      MYSQL_USER: suitecrm
+      MYSQL_PASSWORD: SuiteProd06!
     volumes:
-      - suitecrm_data:/var/lib/suitecrm
-      - /etc/ssl/certs:/etc/ssl/certs:ro
-    deploy:
-      replicas: 1
-      resources:
-        limits:
-          cpus: "4.0"
-          memory: G
-        reservations:
-          cpus: "1.0"
-          memory: 1G
-      restart_policy:
-        condition: any
-        delay: 5s
-    logging:
-      driver: gelf
-      options:
-        gelf-address: "udp://${GRAYLOG_HOST}:12201"
-        tag: "it-stack-suitecrm"
+      - db-data:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost/health || exit 1"]
+      test: ["CMD", "mysqladmin", "ping", "-uroot", "-pRootProd06!", "--silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits: {cpus: "1.0", memory: 512M}
+        reservations: {cpus: "0.25", memory: 128M}
+    networks: [lab06]
+
+  suitecrm-p06-redis:
+    image: redis:7-alpine
+    container_name: suitecrm-p06-redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 320M}
+    networks: [lab06]
+
+  suitecrm-p06-ldap:
+    image: osixia/openldap:1.5.0
+    container_name: suitecrm-p06-ldap
+    restart: unless-stopped
+    environment:
+      LDAP_ORGANISATION: IT-Stack Lab
+      LDAP_DOMAIN: lab.local
+      LDAP_ADMIN_PASSWORD: LdapProd06!
+    ports:
+      - "3899:389"
+    volumes:
+      - ldap-data:/var/lib/ldap
+      - ldap-config:/etc/ldap/slapd.d
+    healthcheck:
+      test: ["CMD-SHELL", "ldapsearch -x -H ldap://localhost -b dc=lab,dc=local -D cn=admin,dc=lab,dc=local -w LdapProd06! cn=admin && echo ok"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 256M}
+    networks: [lab06]
+
+  suitecrm-p06-kc:
+    image: quay.io/keycloak/keycloak:24.0.3
+    container_name: suitecrm-p06-kc
+    command: start-dev
+    restart: unless-stopped
+    environment:
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: Admin06!
+    ports:
+      - "8481:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/realms/master || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        limits: {cpus: "1.0", memory: 768M}
+        reservations: {cpus: "0.25", memory: 256M}
+    networks: [lab06]
+
+  suitecrm-p06-mail:
+    image: mailhog/mailhog:latest
+    container_name: suitecrm-p06-mail
+    restart: unless-stopped
+    ports:
+      - "8681:8025"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8025/api/v2/messages || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits: {cpus: "0.25", memory: 128M}
+    networks: [lab06]
+
+  suitecrm-p06-app:
+    image: bitnami/suitecrm:8
+    container_name: suitecrm-p06-app
+    restart: unless-stopped
+    depends_on:
+      suitecrm-p06-db:
+        condition: service_healthy
+      suitecrm-p06-redis:
+        condition: service_healthy
+      suitecrm-p06-ldap:
+        condition: service_healthy
+      suitecrm-p06-kc:
+        condition: service_healthy
+      suitecrm-p06-mail:
+        condition: service_started
+    ports:
+      - "8382:8080"
+    environment:
+      IT_STACK_ENV: production
+      IT_STACK_MODULE: suitecrm
+      IT_STACK_LAB: "06"
+      SUITECRM_DATABASE_HOST: suitecrm-p06-db
+      SUITECRM_DATABASE_PORT_NUMBER: "3306"
+      SUITECRM_DATABASE_NAME: suitecrm
+      SUITECRM_DATABASE_USER: suitecrm
+      SUITECRM_DATABASE_PASSWORD: SuiteProd06!
+      SUITECRM_USERNAME: admin
+      SUITECRM_PASSWORD: Admin06!
+      SUITECRM_EMAIL: admin@lab.local
+      SUITECRM_SMTP_HOST: suitecrm-p06-mail
+      SUITECRM_SMTP_PORT: "1025"
+      SUITECRM_SESSION_SAVE_HANDLER: redis
+      SUITECRM_SESSION_SAVE_PATH: tcp://suitecrm-p06-redis:6379
+      LDAP_HOST: suitecrm-p06-ldap
+      LDAP_PORT: "389"
+      LDAP_BASE: dc=lab,dc=local
+      LDAP_ADMIN_DN: cn=admin,dc=lab,dc=local
+      LDAP_ADMIN_PASSWORD: LdapProd06!
+      KEYCLOAK_URL: http://suitecrm-p06-kc:8080
+      KEYCLOAK_REALM: it-stack
+      KEYCLOAK_CLIENT_ID: suitecrm
+      KEYCLOAK_CLIENT_SECRET: suitecrm-prod-secret-06
+    volumes:
+      - data:/bitnami/suitecrm
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/ || exit 1"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 120s
-    networks:
-      - it-stack-net
+      retries: 5
+      start_period: 180s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    networks: [lab06]
+
+  suitecrm-p06-cron:
+    image: bitnami/suitecrm:8
+    container_name: suitecrm-p06-cron
+    restart: unless-stopped
+    depends_on:
+      suitecrm-p06-app:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c", "while true; do php /bitnami/suitecrm/cron.php > /dev/null 2>&1; sleep 300; done"]
+    environment:
+      SUITECRM_DATABASE_HOST: suitecrm-p06-db
+      SUITECRM_DATABASE_PORT_NUMBER: "3306"
+      SUITECRM_DATABASE_NAME: suitecrm
+      SUITECRM_DATABASE_USER: suitecrm
+      SUITECRM_DATABASE_PASSWORD: SuiteProd06!
+      SUITECRM_SESSION_SAVE_HANDLER: redis
+      SUITECRM_SESSION_SAVE_PATH: tcp://suitecrm-p06-redis:6379
+    volumes:
+      - data:/bitnami/suitecrm
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 512M}
+    networks: [lab06]
 
 networks:
-  it-stack-net:
-    external: true
-    name: it-stack-production
+  lab06:
+    driver: bridge
+    name: it-stack-suitecrm-lab06
 
 volumes:
-  suitecrm_data:
-    external: true
-    name: it-stack-suitecrm-data
+  db-data:
+  redis-data:
+  ldap-data:
+  ldap-config:
+  data:
