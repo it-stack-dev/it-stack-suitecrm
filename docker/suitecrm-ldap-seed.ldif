@@ -1,0 +1,88 @@
+# suitecrm-ldap-seed.ldif
+# Seeds FreeIPA-compatible LDAP structure into the OpenLDAP integration test
+# container for SuiteCRM Lab 05 (INT-04: SuiteCRM ↔ Keycloak SAML).
+#
+# Used by: docker/docker-compose.integration.yml → suitecrm-i05-ldap-seed
+# SuiteCRM LDAP: basedn dc=lab,dc=local, uid attribute, mail attribute
+# Keycloak federation: cn=users,cn=accounts,dc=lab,dc=local (rhds vendor)
+
+# ── FreeIPA-compatible accounts container ─────────────────────────────────────
+dn: cn=accounts,dc=lab,dc=local
+objectClass: organizationalRole
+objectClass: top
+cn: accounts
+description: FreeIPA-compatible accounts container
+
+dn: cn=users,cn=accounts,dc=lab,dc=local
+objectClass: organizationalRole
+objectClass: top
+cn: users
+description: IPA user accounts
+
+dn: cn=groups,cn=accounts,dc=lab,dc=local
+objectClass: organizationalRole
+objectClass: top
+cn: groups
+description: IPA user groups
+
+# ── Test users ────────────────────────────────────────────────────────────────
+dn: uid=crmadmin,cn=users,cn=accounts,dc=lab,dc=local
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+objectClass: top
+uid: crmadmin
+cn: CRM Admin
+sn: Admin
+givenName: CRM
+displayName: CRM Administrator
+mail: crmadmin@lab.local
+telephoneNumber: +1-555-120-0001
+title: CRM Administrator
+userPassword: Lab05Password!
+
+dn: uid=crmuser1,cn=users,cn=accounts,dc=lab,dc=local
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+objectClass: top
+uid: crmuser1
+cn: CRM User One
+sn: One
+givenName: CRM
+displayName: CRM User One
+mail: crmuser1@lab.local
+telephoneNumber: +1-555-120-0002
+title: Sales Representative
+userPassword: Lab05Password!
+
+dn: uid=crmuser2,cn=users,cn=accounts,dc=lab,dc=local
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+objectClass: top
+uid: crmuser2
+cn: CRM User Two
+sn: Two
+givenName: CRM
+displayName: CRM User Two
+mail: crmuser2@lab.local
+telephoneNumber: +1-555-120-0003
+title: Account Manager
+userPassword: Lab05Password!
+
+# ── Groups ────────────────────────────────────────────────────────────────────
+dn: cn=admins,cn=groups,cn=accounts,dc=lab,dc=local
+objectClass: groupOfNames
+objectClass: top
+cn: admins
+description: CRM administrators
+member: uid=crmadmin,cn=users,cn=accounts,dc=lab,dc=local
+
+dn: cn=crm-users,cn=groups,cn=accounts,dc=lab,dc=local
+objectClass: groupOfNames
+objectClass: top
+cn: crm-users
+description: CRM regular users
+member: uid=crmuser1,cn=users,cn=accounts,dc=lab,dc=local
+member: uid=crmuser2,cn=users,cn=accounts,dc=lab,dc=local

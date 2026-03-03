@@ -99,6 +99,25 @@ services:
           memory: 256M
           cpus: "0.25"
 
+  # ── LDAP Seed (FreeIPA-compatible) ──────────────────────────────────────────
+  suitecrm-i05-ldap-seed:
+    image: osixia/openldap:1.5.0
+    container_name: suitecrm-i05-ldap-seed
+    command: >
+      bash -c "sleep 5 &&
+      ldapadd -x -H ldap://suitecrm-i05-ldap:389
+      -D cn=admin,dc=lab,dc=local -w LdapLab05!
+      -f /seed/suitecrm-ldap-seed.ldif &&
+      echo 'Seed complete'"
+    volumes:
+      - ../docker/suitecrm-ldap-seed.ldif:/seed/suitecrm-ldap-seed.ldif:ro
+    networks:
+      - suitecrm-i05-net
+    depends_on:
+      suitecrm-i05-ldap:
+        condition: service_healthy
+    restart: "no"
+
   # ── Keycloak ─────────────────────────────────────────────────────────────
   suitecrm-i05-kc:
     image: quay.io/keycloak/keycloak:24.0.3
@@ -121,6 +140,9 @@ services:
       timeout: 10s
       retries: 20
       start_period: 30s
+    depends_on:
+      suitecrm-i05-ldap-seed:
+        condition: service_completed_successfully
     networks:
       - suitecrm-i05-net
     deploy:
@@ -202,9 +224,9 @@ services:
       # LDAP
       SUITECRM_LDAP_SERVER: suitecrm-i05-ldap
       SUITECRM_LDAP_PORT: "389"
-      SUITECRM_LDAP_BASE_DN: dc=lab,dc=local
-      SUITECRM_LDAP_ADMIN_DN: cn=admin,dc=lab,dc=local
-      SUITECRM_LDAP_ADMIN_PASSWORD: LdapLab05!
+      SUITECRM_LDAP_BASE_DN: cn=users,cn=accounts,dc=lab,dc=local
+      SUITECRM_LDAP_ADMIN_DN: cn=readonly,dc=lab,dc=local
+      SUITECRM_LDAP_ADMIN_PASSWORD: ReadOnly05!
       # Keycloak SAML
       KEYCLOAK_URL: http://suitecrm-i05-kc:8080
       KEYCLOAK_REALM: it-stack

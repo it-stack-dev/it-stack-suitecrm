@@ -188,24 +188,28 @@ jobs:
         run: docker compose -f docker/docker-compose.sso.yml down -v
 
   lab-05-smoke:
-    name: Lab 05 -- SuiteCRM Advanced Integration (WireMock Odoo-JSONRPC + Nextcloud-CalDAV)
+    name: Lab 05 — INT-04 SuiteCRM↔Keycloak SAML (LDAP seed + federation + SAML client)
     runs-on: ubuntu-latest
     needs: validate
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - name: Install tools
-        run: sudo apt-get install -y curl default-mysql-client netcat-openbsd ldap-utils
+        run: sudo apt-get install -y curl default-mysql-client netcat-openbsd ldap-utils python3
       - name: Validate integration compose
         run: docker compose -f docker/docker-compose.integration.yml config -q && echo "Integration compose valid"
       - name: Start integration stack
         run: docker compose -f docker/docker-compose.integration.yml up -d
       - name: Wait for MariaDB
         run: timeout 120 bash -c 'until docker exec suitecrm-i05-db mysqladmin ping -uroot -pRootLab05! --silent; do sleep 5; done'
-      - name: Wait for WireMock
-        run: timeout 60 bash -c 'until curl -sf http://localhost:8363/__admin/health; do sleep 5; done'
+      - name: Wait for OpenLDAP
+        run: timeout 120 bash -c 'until docker exec suitecrm-i05-ldap ldapsearch -x -H ldap://localhost -b dc=lab,dc=local -D cn=admin,dc=lab,dc=local -w LdapLab05! >/dev/null 2>&1; do sleep 5; done'
+      - name: Wait for LDAP seed to complete
+        run: timeout 60 bash -c 'until [ "$(docker inspect --format={{.State.Status}} suitecrm-i05-ldap-seed 2>/dev/null)" = "exited" ]; do sleep 3; done'
       - name: Wait for Keycloak
         run: timeout 300 bash -c 'until curl -sf http://localhost:8461/realms/master; do sleep 10; done'
+      - name: Wait for WireMock
+        run: timeout 60 bash -c 'until curl -sf http://localhost:8363/__admin/health; do sleep 5; done'
       - name: Wait for Mailhog
         run: timeout 60 bash -c 'until curl -sf http://localhost:8661/api/v2/messages; do sleep 5; done'
       - name: Wait for SuiteCRM web
