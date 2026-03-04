@@ -2,21 +2,18 @@
 # IT-Stack: SuiteCRM — Lab 05: Advanced Integration
 # Module 12 · Phase 3 · Lab 05
 # =============================================================================
-# Services: MariaDB · OpenLDAP · Keycloak · WireMock (Odoo-mock) · Mailhog · SuiteCRM
+# Services: MariaDB · Redis · OpenLDAP · LDAP-seed · Keycloak · WireMock · Mailhog · SuiteCRM · Cron
 # Ports:    SuiteCRM:8362  WireMock:8363  Keycloak:8461  LDAP:3895  Mailhog:8661
 # Credentials:
 #   DB root:     RootLab05!
 #   SuiteCRM DB: suitecrm / SuiteLab05!
 #   SuiteCRM UI: admin / Admin05!
-#   Keycloak:    admin / Admin05!
-#   LDAP:        cn=admin,dc=lab,dc=local / LdapLab05!
-# What's new vs Lab 04:
-#   + WireMock 3.x simulates Odoo JSONRPC API (customer/account sync)
-#   + WireMock also mocks Nextcloud CalDAV endpoint
-#   + SuiteCRM integration env vars: ODOO_URL, ODOO_DB, NEXTCLOUD_URL
-#   + Redis session cache retained from Lab 03
-#   + Dedicated cron container retained
-# Integration tested: SuiteCRM ↔ Odoo (customer sync), SuiteCRM ↔ Nextcloud (CalDAV)
+#   Keycloak:    admin / Admin05!  realm: it-stack
+#   LDAP admin:  cn=admin,dc=lab,dc=local / LdapLab05!
+# What's new vs Lab 04 (INT-09 additions):
+#   + FREEPBX_URL, FREEPBX_AMI_HOST, FREEPBX_AMI_PORT env vars added
+#   + WireMock also mocks FreePBX REST API (/api/rest.php) and AMI HTTP shim
+#   + Integration tested: SuiteCRM ↔ FreePBX CTI (click-to-call originate)
 # =============================================================================
 
 name: it-stack-suitecrm-lab05
@@ -241,6 +238,14 @@ services:
       NEXTCLOUD_URL: http://suitecrm-i05-mock:8080
       NEXTCLOUD_USER: admin
       NEXTCLOUD_CALDAV_PATH: /remote.php/dav/calendars/admin
+      # FreePBX CTI integration (via WireMock — INT-09)
+      FREEPBX_URL: http://suitecrm-i05-mock:8080
+      FREEPBX_AMI_HOST: suitecrm-i05-mock
+      FREEPBX_AMI_PORT: "5038"
+      FREEPBX_AMI_USER: admin
+      FREEPBX_AMI_PASSWORD: Admin05!
+      FREEPBX_SIP_CHANNEL: SIP
+      FREEPBX_OUTBOUND_CONTEXT: suitecrm-cti-outbound
       # Mail relay
       SUITECRM_SMTP_HOST: suitecrm-i05-mail
       SUITECRM_SMTP_PORT: "1025"

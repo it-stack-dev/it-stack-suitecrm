@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# test-lab-12-05.sh — Lab 12-05: Advanced Integration (INT-04)
+# test-lab-12-05.sh — Lab 12-05: Advanced Integration (INT-04 + INT-09)
 # Module 12: SuiteCRM CRM
 # Services: MariaDB · Redis · OpenLDAP · LDAP-seed · Keycloak · WireMock · Mailhog · SuiteCRM · Cron
 # Ports:    SuiteCRM:8362  WireMock:8363  KC:8461  LDAP:3895  MH:8661
 # INT-04: Keycloak SAML client provisioning + FreeIPA LDAP federation + SP metadata check
+# INT-09: FreePBX CTI click-to-call WireMock stubs + env var validation
 set -euo pipefail
 
 LAB_ID="12-05"
@@ -36,7 +37,8 @@ trap cleanup EXIT
 
 echo -e "${CYAN}============================================================${NC}"
 echo -e "${CYAN}  Lab ${LAB_ID}: ${LAB_NAME} — ${MODULE}${NC}"
-echo -e "${CYAN}  SuiteCRM ↔ Odoo JSONRPC (WireMock) + Nextcloud CalDAV${NC}"
+echo -e "${CYAN}  SuiteCRM ↔ Odoo JSONRPC (WireMock) + Nextcloud CalDAV (INT-04)${NC}"
+echo -e "${CYAN}  SuiteCRM ↔ FreePBX CTI click-to-call WireMock stubs (INT-09)${NC}"
 echo -e "${CYAN}============================================================${NC}"
 echo ""
 
@@ -369,10 +371,69 @@ else
   fail "SUITECRM_LDAP_BASE_DN does not use FreeIPA-style path"
 fi
 
-# ── Results (INT-04) ──────────────────────────────────────────────────────────
+# ── Phase 3d: FreePBX CTI WireMock Stubs (INT-09) ───────────────────────────
+section "Phase 3d: FreePBX CTI WireMock Stubs (INT-09)"
+info "Registering WireMock stubs for FreePBX REST API (click-to-call)..."
+
+# FreePBX REST API originate stub
+HTTP_STATUS=$(curl -sf -o /dev/null -w "%{http_code}" \
+  -X POST "${MOCK_URL}/__admin/mappings" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "request": {"method": "POST", "url": "/api/rest.php"},
+    "response": {"status": 200,
+                 "body": "{\"name\":\"Originate\",\"success\":true,\"channel\":\"SIP/101\"}",
+                 "headers": {"Content-Type": "application/json"}}
+  }' || echo "000")
+[ "${HTTP_STATUS}" = "201" ] \
+  && pass "WireMock stub: FreePBX /api/rest.php originate registered" \
+  || fail "WireMock stub: FreePBX /api/rest.php failed (HTTP $HTTP_STATUS)"
+
+# FreePBX admin config stub
+HTTP_STATUS=$(curl -sf -o /dev/null -w "%{http_code}" \
+  -X POST "${MOCK_URL}/__admin/mappings" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "request": {"method": "GET", "url": "/admin/config.php"},
+    "response": {"status": 200, "body": "<html><title>FreePBX Admin</title></html>"}
+  }' || echo "000")
+[ "${HTTP_STATUS}" = "201" ] \
+  && pass "WireMock stub: FreePBX /admin/config.php registered" \
+  || fail "WireMock stub: FreePBX /admin/config.php failed (HTTP $HTTP_STATUS)"
+
+# Verify FreePBX REST mock responds
+if curl -sf -X POST "${MOCK_URL}/api/rest.php" \
+     -H "Content-Type: application/json" \
+     -d '{"action":"Originate","Channel":"SIP/101","Exten":"100","Context":"suitecrm-cti-outbound"}' \
+     | grep -q 'success'; then
+  pass "WireMock FreePBX originate returns success"
+else
+  fail "WireMock FreePBX originate not responding correctly"
+fi
+
+# Assert FREEPBX_* env vars inside SuiteCRM container
+for envpair in "FREEPBX_URL=http://suitecrm-i05-mock" "FREEPBX_AMI_HOST=suitecrm-i05-mock" "FREEPBX_AMI_PORT=5038" "FREEPBX_AMI_USER=admin"; do
+  KEY="${envpair%%=*}"
+  VAL="${envpair#*=}"
+  if docker exec suitecrm-i05-app env | grep -q "${KEY}=${VAL}"; then
+    pass "Env: ${KEY} set correctly"
+  else
+    fail "Env: ${KEY} not set or wrong in SuiteCRM container"
+  fi
+done
+
+# SuiteCRM container → WireMock (FreePBX mock) reachable
+if docker exec suitecrm-i05-app curl -sf \
+     "http://suitecrm-i05-mock:8080/admin/config.php" > /dev/null 2>&1; then
+  pass "SuiteCRM container → WireMock (FreePBX mock) reachable"
+else
+  fail "SuiteCRM container cannot reach WireMock (FreePBX mock)"
+fi
+
+# ── Results (INT-04 + INT-09) ─────────────────────────────────────────────────
 echo ""
 echo -e "${CYAN}============================================================${NC}"
-echo -e "  Lab ${LAB_ID} INT-04 Complete"
+echo -e "  Lab ${LAB_ID} INT-04 + INT-09 Complete"
 echo -e "  ${GREEN}PASS: ${PASS}${NC} | ${RED}FAIL: ${FAIL}${NC}"
 echo -e "${CYAN}============================================================${NC}"
 

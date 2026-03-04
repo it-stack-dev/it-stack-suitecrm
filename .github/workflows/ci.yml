@@ -188,7 +188,7 @@ jobs:
         run: docker compose -f docker/docker-compose.sso.yml down -v
 
   lab-05-smoke:
-    name: Lab 05 — INT-04 SuiteCRM↔Keycloak SAML (LDAP seed + federation + SAML client)
+    name: Lab 05 — INT-04 SuiteCRM↔Keycloak SAML + INT-09 SuiteCRM↔FreePBX CTI
     runs-on: ubuntu-latest
     needs: validate
     continue-on-error: true
