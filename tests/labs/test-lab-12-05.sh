@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# test-lab-12-05.sh — Lab 12-05: Advanced Integration (INT-04 + INT-09)
+# test-lab-12-05.sh — Lab 12-05: Advanced Integration (INT-04 + INT-09 + INT-12)
 # Module 12: SuiteCRM CRM
 # Services: MariaDB · Redis · OpenLDAP · LDAP-seed · Keycloak · WireMock · Mailhog · SuiteCRM · Cron
 # Ports:    SuiteCRM:8362  WireMock:8363  KC:8461  LDAP:3895  MH:8661
 # INT-04: Keycloak SAML client provisioning + FreeIPA LDAP federation + SP metadata check
 # INT-09: FreePBX CTI click-to-call WireMock stubs + env var validation
+# INT-12: Odoo customer sync (JSONRPC WireMock stub + env var validation + container reach)
 set -euo pipefail
 
 LAB_ID="12-05"
@@ -430,10 +431,62 @@ else
   fail "SuiteCRM container cannot reach WireMock (FreePBX mock)"
 fi
 
-# ── Results (INT-04 + INT-09) ─────────────────────────────────────────────────
+# ── Phase 3e: INT-12 Odoo ↔ SuiteCRM Customer Sync (partner API + env vars) ──
+section "Phase 3e: Odoo Customer Sync Env Vars + partner stub (INT-12)"
+
+# Register res.partners search stub
+HTTP_STATUS=$(curl -sf -o /dev/null -w "%{http_code}" \
+  -X POST "${MOCK_URL}/__admin/mappings" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "request": {"method": "POST", "urlPattern": "/web/dataset/call_kw.*"},
+    "response": {"status": 200,
+                 "headers": {"Content-Type": "application/json"},
+                 "body": "{\\"jsonrpc\\":\\"2.0\\",\\"id\\":3,\\"result\\":[{\\"id\\":1,\\"name\\":\\"Acme Corp\\",\\"email\\":\\"acme@lab.local\\",\\"is_company\\":true}]}"}
+  }' || echo "000")
+[ "${HTTP_STATUS}" = "201" ] \
+  && pass "INT-12: WireMock stub /web/dataset/call_kw (res.partner search) registered" \
+  || fail "INT-12: WireMock stub /web/dataset/call_kw failed (HTTP ${HTTP_STATUS})"
+
+# Verify res.partner call_kw stub responds
+if curl -sf -X POST "${MOCK_URL}/web/dataset/call_kw" \
+     -H "Content-Type: application/json" \
+     -d '{"jsonrpc":"2.0","method":"call","id":3,"params":{"model":"res.partner","method":"search_read","args":[[]]}}' \
+     | grep -q '"name"'; then
+  pass "INT-12: WireMock Odoo res.partner search_read responds correctly"
+else
+  fail "INT-12: WireMock Odoo res.partner search_read not responding"
+fi
+
+# Env var checks for INT-12
+for envpair in "ODOO_DB=odoo" "ODOO_USER=admin" "ODOO_API_KEY=lab-odoo-key-05" "ODOO_JSONRPC_ENDPOINT=/jsonrpc"; do
+  KEY="${envpair%%=*}"
+  VAL="${envpair#*=}"
+  if docker exec suitecrm-i05-app env | grep -q "${KEY}=${VAL}"; then
+    pass "INT-12: Env ${KEY} set correctly"
+  else
+    fail "INT-12: Env ${KEY} not set or wrong in SuiteCRM container"
+  fi
+done
+
+# SuiteCRM can reach Odoo endpoint (via WireMock)
+if docker exec suitecrm-i05-app curl -sf \
+     -X POST "http://suitecrm-i05-mock:8080/web/dataset/call_kw" \
+     -H "Content-Type: application/json" \
+     -d '{"jsonrpc":"2.0","method":"call","id":4,"params":{"model":"res.partner","method":"search_read","args":[[]]}}' \
+     > /dev/null 2>&1; then
+  pass "INT-12: SuiteCRM container can reach Odoo partner sync endpoint (WireMock)"
+else
+  fail "INT-12: SuiteCRM container cannot reach Odoo partner sync endpoint"
+fi
+
+# ── Results ───────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${CYAN}============================================================${NC}"
-echo -e "  Lab ${LAB_ID} INT-04 + INT-09 Complete"
+echo -e "  Lab ${LAB_ID}: INT-04 + INT-09 + INT-12 Complete"
+echo -e "  INT-04: SuiteCRM ↔ Keycloak SAML"
+echo -e "  INT-09: SuiteCRM ↔ FreePBX CTI"
+echo -e "  INT-12: SuiteCRM ↔ Odoo customer sync"
 echo -e "  ${GREEN}PASS: ${PASS}${NC} | ${RED}FAIL: ${FAIL}${NC}"
 echo -e "${CYAN}============================================================${NC}"
 
