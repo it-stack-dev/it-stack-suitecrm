@@ -480,13 +480,59 @@ else
   fail "INT-12: SuiteCRM container cannot reach Odoo partner sync endpoint"
 fi
 
+# ── Phase 3f: INT-13 Nextcloud CalDAV CalDAV ↔ SuiteCRM Calendar Sync ────────
+section "Phase 3f: Nextcloud CalDAV Env Vars + CalDAV stub (INT-13)"
+
+# Env var checks for INT-13
+for envpair in "NEXTCLOUD_USER=admin" "NEXTCLOUD_CALDAV_PATH=/remote.php/dav/calendars/admin"; do
+  KEY="${envpair%%=*}"
+  VAL="${envpair#*=}"
+  if docker exec suitecrm-i05-app env | grep -q "${KEY}=${VAL}"; then
+    pass "INT-13: Env ${KEY} set correctly"
+  else
+    fail "INT-13: Env ${KEY} not set or wrong in SuiteCRM container"
+  fi
+done
+
+# Register CalDAV PROPFIND stub (Nextcloud calendars endpoint)
+HTTP_STATUS=$(curl -sf -o /dev/null -w "%{http_code}" \
+  -X POST "${MOCK_URL}/__admin/mappings" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "request": {"method": "PROPFIND", "url": "/remote.php/dav/calendars/admin/"},
+    "response": {"status": 207,
+                 "headers": {"Content-Type": "application/xml; charset=utf-8"},
+                 "body": "<?xml version=\\"1.0\\"?><d:multistatus xmlns:d=\\"DAV:\\"><d:response><d:href>/remote.php/dav/calendars/admin/</d:href><d:propstat><d:prop><d:displayname>admin</d:displayname></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>"}
+  }' || echo "000")
+[ "${HTTP_STATUS}" = "201" ] \
+  && pass "INT-13: WireMock stub CalDAV PROPFIND registered" \
+  || fail "INT-13: WireMock stub CalDAV PROPFIND failed (HTTP ${HTTP_STATUS})"
+
+# Verify CalDAV PROPFIND stub responds with 207
+CALDAV_HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+  -X PROPFIND "${MOCK_URL}/remote.php/dav/calendars/admin/" \
+  -H "Depth: 1")
+[ "${CALDAV_HTTP}" = "207" ] \
+  && pass "INT-13: WireMock CalDAV PROPFIND stub responds 207" \
+  || fail "INT-13: WireMock CalDAV PROPFIND stub returned ${CALDAV_HTTP}"
+
+# SuiteCRM container → WireMock CalDAV endpoint reachable
+if docker exec suitecrm-i05-app curl -sf \
+     -X PROPFIND "http://suitecrm-i05-mock:8080/remote.php/dav/calendars/admin/" \
+     -H "Depth: 1" > /dev/null 2>&1; then
+  pass "INT-13: SuiteCRM container can reach Nextcloud CalDAV endpoint (WireMock)"
+else
+  fail "INT-13: SuiteCRM container cannot reach Nextcloud CalDAV endpoint (WireMock)"
+fi
+
 # ── Results ───────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${CYAN}============================================================${NC}"
-echo -e "  Lab ${LAB_ID}: INT-04 + INT-09 + INT-12 Complete"
+echo -e "  Lab ${LAB_ID}: INT-04 + INT-09 + INT-12 + INT-13 Complete"
 echo -e "  INT-04: SuiteCRM ↔ Keycloak SAML"
 echo -e "  INT-09: SuiteCRM ↔ FreePBX CTI"
 echo -e "  INT-12: SuiteCRM ↔ Odoo customer sync"
+echo -e "  INT-13: SuiteCRM ↔ Nextcloud CalDAV calendar sync"
 echo -e "  ${GREEN}PASS: ${PASS}${NC} | ${RED}FAIL: ${FAIL}${NC}"
 echo -e "${CYAN}============================================================${NC}"
 

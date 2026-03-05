@@ -188,7 +188,7 @@ jobs:
         run: docker compose -f docker/docker-compose.sso.yml down -v
 
   lab-05-smoke:
-    name: Lab 05 — INT-04 SuiteCRM↔Keycloak SAML + INT-09 SuiteCRM↔FreePBX CTI + INT-12 SuiteCRM↔Odoo customer sync
+    name: Lab 05 — INT-04 SuiteCRM↔Keycloak SAML + INT-09 SuiteCRM↔FreePBX CTI + INT-12 SuiteCRM↔Odoo customer sync + INT-13 SuiteCRM↔Nextcloud CalDAV
     runs-on: ubuntu-latest
     needs: validate
     continue-on-error: true
