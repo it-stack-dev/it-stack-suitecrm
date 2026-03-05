@@ -65,7 +65,7 @@ services:
     volumes:
       - suitecrm-l02-data:/bitnami/suitecrm
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/index.php | grep -qi 'suitecrm\\|login'"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/index.php | grep -qi 'suitecrm\|login'"]
       interval: 30s
       timeout: 15s
       retries: 10
