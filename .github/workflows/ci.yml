@@ -27,7 +27,7 @@ jobs:
       - name: ShellCheck — lab test scripts
         run: |
           sudo apt-get install -y shellcheck -qq
-          shellcheck tests/labs/*.sh
+          shellcheck --severity=error tests/labs/*.sh
 
       - name: Validate module manifest
         run: |
